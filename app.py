@@ -3,11 +3,23 @@ import os
 
 import aws_cdk as cdk
 
+from webmonitor.webmonitor_database import WebmonitorDatabase
 from webmonitor.webmonitor_stackuse1 import WebmonitorStackUse1
 from webmonitor.webmonitor_stackuse2 import WebmonitorStackUse2
 from webmonitor.webmonitor_stackusw2 import WebmonitorStackUsw2
 
 app = cdk.App()
+
+WebmonitorDatabase(
+    app, 'WebmonitorDatabase',
+    env = cdk.Environment(
+        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        region = 'us-east-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    )
+)
 
 WebmonitorStackUse1(
     app, 'WebmonitorStackUse1',
