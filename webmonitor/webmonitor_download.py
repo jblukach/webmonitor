@@ -98,7 +98,7 @@ class WebmonitorDownload(Stack):
             code = _lambda.Code.from_asset('download'),
             handler = 'download.handler',
             environment = dict(
-                S3_BUCKET_NAME = 'tempwebmonitor',
+                S3_BUCKET_NAME = 'temporarywebmonitor',
                 SECRET_MGR_ARN = secret.secret_arn
             ),
             timeout = Duration.seconds(900),
