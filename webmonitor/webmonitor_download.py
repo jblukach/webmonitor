@@ -4,6 +4,7 @@ from aws_cdk import (
     Duration,
     RemovalPolicy,
     SecretValue,
+    Size,
     Stack,
     aws_events as _events,
     aws_events_targets as _targets,
@@ -101,8 +102,9 @@ class WebmonitorDownload(Stack):
                 S3_BUCKET_NAME = 'temporarywebmonitor',
                 SECRET_MGR_ARN = secret.secret_arn
             ),
+            ephemeral_storage_size = Size.gibibytes(4),
             timeout = Duration.seconds(900),
-            memory_size = 512,
+            memory_size = 3008,
             role = role,
             layers = [
                 requests
@@ -120,7 +122,7 @@ class WebmonitorDownload(Stack):
             self, 'event',
             schedule = _events.Schedule.cron(
                 minute = '0',
-                hour = '0',
+                hour = '1',
                 month = '*',
                 week_day = '*',
                 year = '*'

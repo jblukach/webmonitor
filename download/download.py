@@ -20,77 +20,45 @@ def handler(event, context):
 
     headers = {'User-Agent': 'Web Monitor (https://github.com/jblukach/webmonitor)'}
 
-    ### MALWARE ###
+    items = []
+    items.append('dailyupdate')
+    items.append('weeklyupdate')
+    items.append('monthlyupdate')
+    items.append('quarterlyupdate')
+    items.append('dailyremove')
+    items.append('weeklyremove')
+    items.append('monthlyremove')
+    items.append('quarterlyremove')
+    items.append('detailed-update')
+    items.append('malware')
 
-    url = 'https://domains-monitor.com/api/v1/'+login['token']+'/get/malware/list/text/'
-    response = requests.get(url, headers=headers)
-    print(f'HTTP Status Code: {response.status_code}')
+    for item in items:
 
-    fname = f'{year}-{month}-{day}-malware.csv'
-    fpath = f'/tmp/{fname}'
+        print(f'Downloading {item} list...')
 
-    f = open(fpath, 'w')
-    f.write(response.text)
-    f.close()
+        url = 'https://domains-monitor.com/api/v1/'+login['token']+'/get/'+item+'/list/text/'
+        response = requests.get(url, headers=headers)
+        print(f'HTTP Status Code: {response.status_code}')
 
-    s3 = boto3.resource('s3')
+        fname = f'{year}-{month}-{day}-{item}.csv'
+        fpath = f'/tmp/{fname}'
 
-    s3.meta.client.upload_file(
-        fpath,
-        os.environ['S3_BUCKET_NAME'],
-        fname,
-        ExtraArgs = {
-            'ContentType': "text/csv"
-        }
-    )
+        f = open(fpath, 'w')
+        f.write(response.text)
+        f.close()
 
-    ### DAILY REMOVE ###
+        s3 = boto3.resource('s3')
 
-    url = 'https://domains-monitor.com/api/v1/'+login['token']+'/get/dailyremove/list/text/'
-    response = requests.get(url, headers=headers)
-    print(f'HTTP Status Code: {response.status_code}')
+        s3.meta.client.upload_file(
+            fpath,
+            os.environ['S3_BUCKET_NAME'],
+            fname,
+            ExtraArgs = {
+                'ContentType': "text/csv"
+            }
+        )
 
-    fname = f'{year}-{month}-{day}-dailyremove.csv'
-    fpath = f'/tmp/{fname}'
-
-    f = open(fpath, 'w')
-    f.write(response.text)
-    f.close()
-
-    s3 = boto3.resource('s3')
-
-    s3.meta.client.upload_file(
-        fpath,
-        os.environ['S3_BUCKET_NAME'],
-        fname,
-        ExtraArgs = {
-            'ContentType': "text/csv"
-        }
-    )
-
-    ### DETAILED UPDATE ###
-
-    url = 'https://domains-monitor.com/api/v1/'+login['token']+'/get/detailed-update/list/text/'
-    response = requests.get(url, headers=headers)
-    print(f'HTTP Status Code: {response.status_code}')
-
-    fname = f'{year}-{month}-{day}-detailed-update.csv'
-    fpath = f'/tmp/{fname}'
-
-    f = open(fpath, 'w')
-    f.write(response.text)
-    f.close()
-
-    s3 = boto3.resource('s3')
-
-    s3.meta.client.upload_file(
-        fpath,
-        os.environ['S3_BUCKET_NAME'],
-        fname,
-        ExtraArgs = {
-            'ContentType': "text/csv"
-        }
-    )
+    os.system('ls -lh /tmp')
 
     return {
         'statusCode': 200,
