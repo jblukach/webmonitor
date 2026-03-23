@@ -3,7 +3,6 @@ import datetime
 import json
 import os
 import requests
-import shutil
 
 def handler(event, context):
 
@@ -25,11 +24,9 @@ def handler(event, context):
     items.append('dailyupdate')
     items.append('weeklyupdate')
     items.append('monthlyupdate')
-    items.append('quarterlyupdate')
     items.append('dailyremove')
     items.append('weeklyremove')
     items.append('monthlyremove')
-    items.append('quarterlyremove')
     items.append('detailed-update')
     items.append('malware')
 
@@ -58,36 +55,6 @@ def handler(event, context):
                 'ContentType': "text/csv"
             }
         )
-
-    print(f'Downloading full list...')
-
-    url = 'https://domains-monitor.com/api/v1/'+login['token']+'/get/full/list/zip/'
-
-    fname = f'{year}-{month}-{day}-full.zip'
-    fpath = f'/tmp/{fname}'
-
-    try:
-
-        with requests.get(url, headers=headers,stream=True) as r:
-            r.raise_for_status() # Raise an exception for bad status codes (e.g., 404)
-            with open(fpath, 'wb') as f:
-                shutil.copyfileobj(r.raw, f, length=1024*1024*5)
-            f.close()
-        r.close()
-
-        s3.meta.client.upload_file(
-            fpath,
-            os.environ['S3_BUCKET_NAME'],
-            fname,
-            ExtraArgs = {
-                'ContentType': "application/zip"
-            }
-        )
-
-    except requests.exceptions.RequestException as e:
-
-        if os.path.exists(fpath):
-            os.remove(fpath)
 
     os.system('ls -lh /tmp')
 

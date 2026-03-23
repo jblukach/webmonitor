@@ -21,7 +21,7 @@ def handler(event, context):
         if key['Key'].startswith(f'{year}-{month}-{day}-') and key['Key'].endswith('.csv'):
 
             if key['Size'] != 0 and 'detailed-update' not in key['Key']:
-
+                
                 print(key['Key'])
 
                 lambda_client.invoke(
