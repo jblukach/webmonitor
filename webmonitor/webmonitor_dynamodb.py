@@ -127,6 +127,25 @@ class WebmonitorDynamoDB(Stack):
             deletion_protection = True
         )
 
+        full = _dynamodb.Table(
+            self, 'full',
+            table_name = 'full',
+            partition_key = {
+                'name': 'pk',
+                'type': _dynamodb.AttributeType.STRING
+            },
+            sort_key = {
+                'name': 'sk',
+                'type': _dynamodb.AttributeType.STRING
+            },
+            billing_mode = _dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy = RemovalPolicy.DESTROY,
+                        point_in_time_recovery_specification = _dynamodb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled = True
+            ),
+            deletion_protection = True
+        )
+
         malware = _dynamodb.Table(
             self, 'malware',
             table_name = 'malware',

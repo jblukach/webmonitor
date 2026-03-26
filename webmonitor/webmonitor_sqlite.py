@@ -88,7 +88,8 @@ class WebmonitorSqlite(Stack):
             handler = 'list.handler',
             environment = dict(
                 S3_BUCKET = 'temporarywebmonitor',
-                MAKE_FUNCTION_NAME = make.function_name
+                MAKE_FUNCTION_NAME = make.function_name,
+                CT_BUCKET = 'caretakerstaged'
             ),
             timeout = Duration.seconds(900),
             memory_size = 256,

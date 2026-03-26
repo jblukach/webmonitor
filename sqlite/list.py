@@ -32,6 +32,21 @@ def handler(event, context):
                     })
                 )
 
+    s3_client.download_file(os.environ['CT_BUCKET'], 'dns.sqlite3', '/tmp/dns.sqlite3')
+
+    s3_resource = boto3.resource('s3')
+
+    fname = f'{year}-{month}-{day}-osint.sqlite3'
+
+    s3_resource.meta.client.upload_file(
+        '/tmp/dns.sqlite3',
+        os.environ['S3_BUCKET'],
+        fname,
+        ExtraArgs = {
+            'ContentType': "application/x-sqlite3"
+        }
+    )
+
     return {
         'statusCode': 200,
         'body': json.dumps('List Files!')

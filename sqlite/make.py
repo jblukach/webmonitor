@@ -33,6 +33,7 @@ def handler(event, context):
     db.close()
 
     s3_resource = boto3.resource('s3')
+
     s3_resource.meta.client.upload_file(
         '/tmp/'+fname+'.sqlite3',
         os.environ['S3_BUCKET'],
