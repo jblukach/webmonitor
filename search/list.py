@@ -29,7 +29,7 @@ def handler(event, context):
             KeyConditionExpression = Key('pk').eq('LUNKER#'),
             ExclusiveStartKey = response['LastEvaluatedKey']
         )
-        responsedata.update(response['Items'])
+        responsedata.extend(response['Items'])
 
     print('DynamoDB: '+str(len(responsedata)))
 
@@ -59,11 +59,11 @@ def handler(event, context):
                         'Item': item
                     }
 
-                    #lambda_client.invoke(
-                    #    FunctionName = os.environ['SEARCH_FUNCTION_NAME'],
-                    #    InvocationType = 'Event',
-                    #    Payload = json.dumps(payload)
-                    #)
+                    lambda_client.invoke(
+                        FunctionName = os.environ['SEARCH_FUNCTION_NAME'],
+                        InvocationType = 'Event',
+                        Payload = json.dumps(payload)
+                    )
 
     return {
         'statusCode': 200,
