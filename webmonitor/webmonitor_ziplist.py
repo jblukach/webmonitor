@@ -58,6 +58,7 @@ class WebmonitorZiplist(Stack):
 
         ziplist = _lambda.Function(
             self, 'ziplist',
+            function_name = 'ziplist',
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('ziplist'),

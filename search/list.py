@@ -82,6 +82,17 @@ def handler(event, context):
             }
         )
 
+        payload = {
+            'Key': f'{year}-{month}-{day}-full.zip',
+            'Item': item
+        }
+
+        lambda_client.invoke(
+            FunctionName = 'ziplist',
+            InvocationType = 'Event',
+            Payload = json.dumps(payload)
+        )
+
         for key in objects['Contents']:
 
             if key['Key'].startswith(f'{year}-{month}-{day}-') and key['Key'].endswith('.sqlite3'):

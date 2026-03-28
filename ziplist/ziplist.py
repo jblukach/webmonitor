@@ -7,11 +7,8 @@ from boto3.dynamodb.conditions import Key
 
 def handler(event, context):
 
-    #key = event.get('Key')
-    #item = event.get('Item')
-
-    key = '2026-03-28-full.zip'
-    item = 'lukach'
+    key = event.get('Key')
+    item = event.get('Item')
 
     print('Item: '+item+' Key: '+key)
 
