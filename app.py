@@ -6,8 +6,6 @@ import aws_cdk as cdk
 from webmonitor.webmonitor_database import WebmonitorDatabase
 from webmonitor.webmonitor_download import WebmonitorDownload
 from webmonitor.webmonitor_dynamodb import WebmonitorDynamoDB
-from webmonitor.webmonitor_dynamodb_use1 import WebmonitorDynamoDbUse1
-from webmonitor.webmonitor_dynamodb_usw2 import WebmonitorDynamoDbUsw2
 from webmonitor.webmonitor_github import WebmonitorGithub
 from webmonitor.webmonitor_search import WebmonitorSearch
 from webmonitor.webmonitor_sqlite import WebmonitorSqlite
@@ -43,28 +41,6 @@ WebmonitorDynamoDB(
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
         region = 'us-east-2'
-    ),
-    synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = 'lukach'
-    )
-)
-
-WebmonitorDynamoDbUse1(
-    app, 'WebmonitorDynamoDbUse1',
-    env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region = 'us-east-1'
-    ),
-    synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = 'lukach'
-    )
-)
-
-WebmonitorDynamoDbUsw2(
-    app, 'WebmonitorDynamoDbUsw2',
-    env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region = 'us-west-2'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
         qualifier = 'lukach'

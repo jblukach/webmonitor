@@ -10,6 +10,66 @@ from constructs import Construct
 
 class WebmonitorDynamoDB(Stack):
 
+    def _replica_resource_policy(
+        self,
+        organization_id: str,
+        table_name: str,
+        region: str
+    ) -> _iam.PolicyDocument:
+        return _iam.PolicyDocument(
+            statements = [
+                _iam.PolicyStatement(
+                    sid = 'AllowOrganizationGetItemAndQuery',
+                    effect = _iam.Effect.ALLOW,
+                    principals = [
+                        _iam.OrganizationPrincipal(organization_id = organization_id)
+                    ],
+                    actions = [
+                        'dynamodb:GetItem',
+                        'dynamodb:Query'
+                    ],
+                    resources = [
+                        self.format_arn(
+                            region = region,
+                            service = 'dynamodb',
+                            resource = 'table',
+                            resource_name = table_name
+                        ),
+                        self.format_arn(
+                            region = region,
+                            service = 'dynamodb',
+                            resource = 'table',
+                            resource_name = f'{table_name}/index/*'
+                        )
+                    ]
+                )
+            ]
+        )
+
+    def _replicas_for_table(
+        self,
+        organization_id: str,
+        table_name: str
+    ) -> list[_dynamodb.ReplicaTableProps]:
+        return [
+            _dynamodb.ReplicaTableProps(
+                region = 'us-east-1',
+                resource_policy = self._replica_resource_policy(
+                    organization_id,
+                    table_name,
+                    'us-east-1'
+                )
+            ),
+            _dynamodb.ReplicaTableProps(
+                region = 'us-west-2',
+                resource_policy = self._replica_resource_policy(
+                    organization_id,
+                    table_name,
+                    'us-west-2'
+                )
+            ),
+        ]
+
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
@@ -41,10 +101,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'dailyremove')
         )
 
         dailyremove.add_to_resource_policy(
@@ -93,10 +150,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'dailyupdate')
         )
 
         dailyupdate.add_to_resource_policy(
@@ -145,10 +199,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'weeklyremove')
         )
 
         weeklyremove.add_to_resource_policy(
@@ -197,10 +248,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'weeklyupdate')
         )
 
         weeklyupdate.add_to_resource_policy(
@@ -249,10 +297,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'monthlyremove')
         )
 
         monthlyremove.add_to_resource_policy(
@@ -301,10 +346,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'monthlyupdate')
         )
 
         monthlyupdate.add_to_resource_policy(
@@ -353,10 +395,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'quarterlyremove')
         )
 
         quarterlyremove.add_to_resource_policy(
@@ -404,10 +443,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'quarterlyupdate')
         )
 
         quarterlyupdate.add_to_resource_policy(
@@ -455,10 +491,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'full')
         )
 
         full.add_to_resource_policy(
@@ -506,10 +539,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'malware')
         )
 
         malware.add_to_resource_policy(
@@ -557,10 +587,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'osint')
         )
 
         osint.add_to_resource_policy(
@@ -608,10 +635,7 @@ class WebmonitorDynamoDB(Stack):
             ),
             deletion_protection = True,
             dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = [
-                _dynamodb.ReplicaTableProps(region = 'us-east-1'),
-                _dynamodb.ReplicaTableProps(region = 'us-west-2'),
-            ]
+            replicas = self._replicas_for_table(organization.string_value, 'state')
         )
 
         state.add_to_resource_policy(
