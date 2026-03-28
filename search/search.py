@@ -83,7 +83,8 @@ def handler(event, context):
                 'domain': domain,
                 'sld': sld,
                 'tld': tld,
-                'ttl': ttl
+                'ttl': ttl,
+                'tbl': table_name
             }
         )
         print(f'Inserted: {domain}')

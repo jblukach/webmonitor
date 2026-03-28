@@ -67,7 +67,7 @@ class WebmonitorSqlite(Stack):
             environment = dict(
                 S3_BUCKET = 'temporarywebmonitor'
             ),
-            ephemeral_storage_size = Size.gibibytes(2),
+            ephemeral_storage_size = Size.gibibytes(4),
             timeout = Duration.seconds(900),
             memory_size = 3008,
             role = role

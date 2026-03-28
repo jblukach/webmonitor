@@ -20,11 +20,16 @@ class WebmonitorSearch(Stack):
 
         region = Stack.of(self).region
 
-    ### PARAMETER ###
+    ### PARAMETERS ###
 
         lunker = _ssm.StringParameter.from_string_parameter_attributes(
             self, 'lunker',
             parameter_name = '/account/lunker'
+        )
+
+        organization = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'organization',
+            parameter_name = '/organization/id'
         )
 
     ### IAM ROLE ###
@@ -105,6 +110,7 @@ class WebmonitorSearch(Stack):
 
         list = _lambda.Function(
             self, 'list',
+            function_name = 'searchlist',
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('search'),
@@ -112,12 +118,20 @@ class WebmonitorSearch(Stack):
             environment = dict(
                 DYNAMODB_TABLE = 'arn:aws:dynamodb:'+region+':'+lunker.string_value+':table/lunker',
                 S3_BUCKET = 'temporarywebmonitor',
-                SEARCH_FUNCTION_NAME = search.function_name
+                SEARCH_FUNCTION_NAME = search.function_name,
+                STATE_TABLE = 'state'
             ),
             timeout = Duration.seconds(900),
             memory_size = 256,
             role = role
         )
+
+        composite = _iam.CompositePrincipal(
+            _iam.OrganizationPrincipal(organization.string_value),
+            _iam.ServicePrincipal('apigateway.amazonaws.com')
+        )
+
+        list.grant_invoke_composite_principal(composite)
 
         listlogs = _logs.LogGroup(
             self, 'listlogs',

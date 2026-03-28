@@ -25,9 +25,11 @@ def handler(event, context):
     items.append('dailyupdate')
     items.append('weeklyupdate')
     items.append('monthlyupdate')
+    items.append('quarterlyupdate')
     items.append('dailyremove')
     items.append('weeklyremove')
     items.append('monthlyremove')
+    items.append('quarterlyremove')
     items.append('detailed-update')
     items.append('malware')
 
