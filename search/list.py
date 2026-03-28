@@ -23,6 +23,7 @@ def handler(event, context):
     state = dynamodb.Table(os.environ['STATE_TABLE'])
     table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
     today = year+'-'+month+'-'+day
+    ttl_30_days = int((datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days = 30)).timestamp())
 
     items = []
     run_scheduled_mode = True
@@ -76,7 +77,8 @@ def handler(event, context):
             Item={
                 'pk': 'LUNKER#',
                 'sk': 'LUNKER#'+item,
-                'lastday': today
+                'lastday': today,
+                'ttl': ttl_30_days
             }
         )
 
