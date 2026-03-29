@@ -1,4 +1,2 @@
 aws-cdk-lib>=2.244.0,<3.0.0
 constructs>=10.5.0,<11.0.0
-aws_cdk.aws_glue_alpha
-aws_cdk.aws_s3tables_alpha
