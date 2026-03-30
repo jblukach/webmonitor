@@ -1,8 +1,12 @@
 from aws_cdk import (
+    Duration,
     RemovalPolicy,
     Stack,
     aws_dynamodb as _dynamodb,
     aws_iam as _iam,
+    aws_lambda as _lambda,
+    aws_lambda_event_sources as _sources,
+    aws_logs as _logs,
     aws_ssm as _ssm
 )
 
@@ -73,7 +77,15 @@ class WebmonitorDynamoDB(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        account = Stack.of(self).account
+        region = Stack.of(self).region
+
     ### PARAMETER ###
+
+        lunker = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'lunker',
+            parameter_name = '/account/lunker'
+        )
 
         organization = _ssm.StringParameter.from_string_parameter_attributes(
             self, 'organization',
@@ -130,7 +142,6 @@ class WebmonitorDynamoDB(Stack):
             )
         )
 
-
         dailyupdate = _dynamodb.TableV2(
             self, 'dailyupdate',
             table_name = 'dailyupdate',
@@ -178,7 +189,6 @@ class WebmonitorDynamoDB(Stack):
                 ]
             )
         )
-
 
         weeklyremove = _dynamodb.TableV2(
             self, 'weeklyremove',
@@ -228,7 +238,6 @@ class WebmonitorDynamoDB(Stack):
             )
         )
 
-
         weeklyupdate = _dynamodb.TableV2(
             self, 'weeklyupdate',
             table_name = 'weeklyupdate',
@@ -276,7 +285,6 @@ class WebmonitorDynamoDB(Stack):
                 ]
             )
         )
-
 
         monthlyremove = _dynamodb.TableV2(
             self, 'monthlyremove',
@@ -326,7 +334,6 @@ class WebmonitorDynamoDB(Stack):
             )
         )
 
-
         monthlyupdate = _dynamodb.TableV2(
             self, 'monthlyupdate',
             table_name = 'monthlyupdate',
@@ -374,7 +381,6 @@ class WebmonitorDynamoDB(Stack):
                 ]
             )
         )
-
 
         quarterlyremove = _dynamodb.TableV2(
             self, 'quarterlyremove',
@@ -661,5 +667,92 @@ class WebmonitorDynamoDB(Stack):
                         resource_name = 'state/index/*'
                     )
                 ]
+            )
+        )
+
+    ### IAM ROLE ###
+
+        role = _iam.Role(
+            self, 'role',
+            assumed_by = _iam.ServicePrincipal(
+                'lambda.amazonaws.com'
+            )
+        )
+
+        role.add_managed_policy(
+            _iam.ManagedPolicy.from_aws_managed_policy_name(
+                'service-role/AWSLambdaBasicExecutionRole'
+            )
+        )
+
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions = [
+                    'ses:SendRawEmail'
+                ],
+                resources = [
+                    'arn:aws:ses:'+region+':'+account+':identity/hello@lukach.io'
+                ]
+            )
+        )
+
+    ### ACTION LAMBDA ###
+
+        action = _lambda.Function(
+            self, 'action',
+            function_name = 'action',
+            runtime = _lambda.Runtime.PYTHON_3_13,
+            architecture = _lambda.Architecture.ARM_64,
+            code = _lambda.Code.from_asset('action'),
+            handler = 'action.handler',
+            environment = dict(
+                LUNKER_TABLE = 'arn:aws:dynamodb:'+region+':'+lunker.string_value+':table/lunker',
+                SES_EMAIL = 'arn:aws:ses:'+region+':'+account+':identity/hello@lukach.io'
+            ),
+            timeout = Duration.seconds(30),
+            memory_size = 256,
+            role = role
+        )
+
+        logs = _logs.LogGroup(
+            self, 'logs',
+            log_group_name = '/aws/lambda/'+action.function_name,
+            retention = _logs.RetentionDays.THIRTEEN_MONTHS,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+        action.add_event_source(
+            _sources.DynamoEventSource(
+                dailyremove,
+                starting_position = _lambda.StartingPosition.TRIM_HORIZON,
+                batch_size = 1,
+                retry_attempts = 3
+            )
+        )
+
+        action.add_event_source(
+            _sources.DynamoEventSource(
+                dailyupdate,
+                starting_position = _lambda.StartingPosition.TRIM_HORIZON,
+                batch_size = 1,
+                retry_attempts = 3
+            )
+        )
+
+        action.add_event_source(
+            _sources.DynamoEventSource(
+                malware,
+                starting_position = _lambda.StartingPosition.TRIM_HORIZON,
+                batch_size = 1,
+                retry_attempts = 3
+            )
+        )
+
+        action.add_event_source(
+            _sources.DynamoEventSource(
+                osint,
+                starting_position = _lambda.StartingPosition.TRIM_HORIZON,
+                batch_size = 1,
+                retry_attempts = 3
             )
         )
