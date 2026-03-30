@@ -688,10 +688,24 @@ class WebmonitorDynamoDB(Stack):
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions = [
+                    'dynamodb:DescribeTable',
+                    'dynamodb:Query'
+                ],
+                resources = [
+                    'arn:aws:dynamodb:'+region+':'+lunker.string_value+':table/lunker',
+                    'arn:aws:dynamodb:'+region+':'+lunker.string_value+':table/lunker/index/*'
+                ]
+            )
+        )
+
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions = [
                     'ses:SendRawEmail'
                 ],
                 resources = [
-                    'arn:aws:ses:'+region+':'+account+':identity/hello@lukach.io'
+                    'arn:aws:ses:'+region+':'+account+':identity/hello@lukach.io',
+                    'arn:aws:ses:'+region+':'+account+':identity/lukach.io'
                 ]
             )
         )
@@ -707,6 +721,8 @@ class WebmonitorDynamoDB(Stack):
             handler = 'action.handler',
             environment = dict(
                 LUNKER_TABLE = 'arn:aws:dynamodb:'+region+':'+lunker.string_value+':table/lunker',
+                LUNKER_TK_INDEX = 'tk',
+                SES_FROM = 'hello@lukach.io',
                 SES_EMAIL = 'arn:aws:ses:'+region+':'+account+':identity/hello@lukach.io'
             ),
             timeout = Duration.seconds(30),
