@@ -4,6 +4,33 @@ import json
 import os
 from boto3.dynamodb.conditions import Key
 
+
+def _build_ziplist_payloads(key, items, max_payload_bytes=200000):
+    payloads = []
+    chunk = []
+
+    for item in items:
+        candidate = chunk + [item]
+        payload = {'Key': key, 'Items': candidate}
+        payload_size = len(json.dumps(payload).encode('utf-8'))
+
+        if payload_size <= max_payload_bytes:
+            chunk = candidate
+            continue
+
+        if chunk:
+            payloads.append({'Key': key, 'Items': chunk})
+            chunk = [item]
+            continue
+
+        # Fallback for an unusually large single item string.
+        payloads.append({'Key': key, 'Item': item})
+
+    if chunk:
+        payloads.append({'Key': key, 'Items': chunk})
+
+    return payloads
+
 def handler(event, context):
 
     status = event.get('Status') or event.get('status')
@@ -67,7 +94,22 @@ def handler(event, context):
 
         items = sorted(set(items))
 
-    print('Items: '+str(len(items)))
+    print('Items Count: '+str(len(items)))
+    print('Items: '+json.dumps(items))
+
+    if items:
+        zip_payloads = _build_ziplist_payloads(
+            f'{year}-{month}-{day}-full.zip',
+            items
+        )
+
+        print('Ziplist Invocations: '+str(len(zip_payloads)))
+        for payload in zip_payloads:
+            lambda_client.invoke(
+                FunctionName = 'ziplist',
+                InvocationType = 'Event',
+                Payload = json.dumps(payload)
+            )
 
     for item in items:
 
@@ -80,17 +122,6 @@ def handler(event, context):
                 'lastday': today,
                 'ttl': ttl_30_days
             }
-        )
-
-        payload = {
-            'Key': f'{year}-{month}-{day}-full.zip',
-            'Item': item
-        }
-
-        lambda_client.invoke(
-            FunctionName = 'ziplist',
-            InvocationType = 'Event',
-            Payload = json.dumps(payload)
         )
 
         for key in objects['Contents']:
@@ -116,6 +147,7 @@ def handler(event, context):
         'statusCode': 200,
         'body': json.dumps({
             'message': 'Query Lunker & List Files!',
+            'itemCount': len(items),
             'items': items
         })
     }
