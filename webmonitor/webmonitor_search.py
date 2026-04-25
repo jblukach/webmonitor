@@ -93,6 +93,7 @@ class WebmonitorSearch(Stack):
             code = _lambda.Code.from_asset('search'),
             handler = 'search.handler',
             environment = dict(
+                DYNAMODB_TABLE = 'arn:aws:dynamodb:'+region+':'+lunker.string_value+':table/permutation',
                 S3_BUCKET = 'temporarywebmonitor'
             ),
             ephemeral_storage_size = Size.gibibytes(4),

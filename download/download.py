@@ -3,7 +3,6 @@ import datetime
 import json
 import os
 import requests
-import shutil
 
 def handler(event, context):
 
