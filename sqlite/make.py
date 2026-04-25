@@ -17,17 +17,26 @@ def handler(event, context):
         os.remove('/tmp/'+fname+'.sqlite3')
 
     db = sqlite3.connect('/tmp/'+fname+'.sqlite3')
-    db.execute('CREATE TABLE IF NOT EXISTS domains (pk INTEGER PRIMARY KEY, domain TEXT)')
-    db.execute('CREATE INDEX domain_index ON domains (domain)')
+    db.execute('PRAGMA journal_mode = OFF')
+    db.execute('PRAGMA synchronous = OFF')
+    db.execute('PRAGMA temp_store = MEMORY')
+    db.execute('CREATE TABLE IF NOT EXISTS domains (pk INTEGER PRIMARY KEY, domain TEXT NOT NULL UNIQUE)')
 
     f = open('/tmp/'+key, 'r')
     data = f.read()
     f.close()
 
-    datas = data.split('\n')
+    datas = [line.strip() for line in data.split('\n') if line.strip()]
 
-    for data in datas:
-        db.execute('INSERT INTO domains (domain) VALUES (?)', (data,))
+    db.executemany('INSERT OR IGNORE INTO domains (domain) VALUES (?)', ((line,) for line in datas))
+
+    try:
+        db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS domains_fts USING fts5(domain, content='domains', content_rowid='pk', tokenize='trigram')")
+        db.execute("INSERT INTO domains_fts(domains_fts) VALUES ('rebuild')")
+        print('Built FTS index: domains_fts')
+    except sqlite3.OperationalError as error:
+        # Fallback for runtimes where SQLite is compiled without FTS5/trigram.
+        print('FTS index unavailable, continuing without FTS: ' + str(error))
 
     db.commit()
     db.close()

@@ -96,9 +96,9 @@ class WebmonitorSearch(Stack):
                 DYNAMODB_TABLE = 'arn:aws:dynamodb:'+region+':'+lunker.string_value+':table/permutation',
                 S3_BUCKET = 'temporarywebmonitor'
             ),
-            ephemeral_storage_size = Size.gibibytes(4),
+            ephemeral_storage_size = Size.gibibytes(10),
             timeout = Duration.seconds(900),
-            memory_size = 4096,
+            memory_size = 10240,
             role = role
         )
 

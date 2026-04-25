@@ -1,61 +1,71 @@
 # webmonitor
 
-webmonitor is an AWS CDK application that ingests domain intelligence feeds, converts them to local SQLite datasets, reconciles findings into DynamoDB, and sends SES alerts for selected insert events.
+webmonitor is an AWS CDK application that downloads domain intelligence feeds, converts them into dated SQLite datasets, reconciles matches into DynamoDB, and sends SES alerts for selected new records.
 
-The system is implemented as scheduled Lambda workflows with organization-scoped read access policies for S3 and DynamoDB.
+All stacks are instantiated in `us-east-2` from `app.py`. DynamoDB tables are then replicated to `us-east-1` and `us-west-2` where configured.
 
-## What It Does
+## Overview
 
-1. Downloads multiple domains-monitor feed types to S3 as dated CSV files.
-2. Converts daily CSV files into SQLite files.
-3. Copies a shared DNS SQLite file into a dated osint snapshot.
-4. Reads monitored search terms from DynamoDB and runs matching across daily SQLite files.
-5. Reconciles insert and delete deltas into per-feed DynamoDB tables.
-6. Sends SES notifications for inserts from selected tables.
+The scheduled workflow is:
+
+1. Download Domains Monitor feeds into S3 as `YYYY-MM-DD-*.csv` objects.
+2. Convert each CSV into a corresponding `YYYY-MM-DD-*.sqlite3` database.
+3. Copy a shared `dns.sqlite3` snapshot from `caretakerstaged` into the working bucket as `YYYY-MM-DD-osint.sqlite3`.
+4. Read monitored search terms from the shared `lunker` table and invoke the search worker for each current-day SQLite object.
+5. Reconcile SQLite matches against per-feed DynamoDB tables by inserting new domains and deleting stale ones.
+6. Send SES email alerts from DynamoDB stream inserts on selected tables.
 
 ## Stacks
 
-- WebmonitorStorage
-	- Creates S3 bucket temporarywebmonitor.
-	- Enforces SSL, blocks public access, and applies 1-day lifecycle expiration.
-	- Adds organization-scoped bucket and object read policies using /organization/id.
+### `WebmonitorStorage`
 
-- WebmonitorDownload
-	- Creates Lambda download (Python 3.13, ARM64, 15-minute timeout, 4 GiB ephemeral storage).
-	- Creates Secrets Manager secret webmonitor containing token placeholder.
-	- Downloads feed types to temporarywebmonitor:
-		- dailyupdate, weeklyupdate, monthlyupdate, quarterlyupdate
-		- dailyremove, weeklyremove, monthlyremove, quarterlyremove
-		- detailed-update, malware
-	- Scheduled daily at 01:00 UTC.
+- Creates S3 bucket `temporarywebmonitor`.
+- Enables S3-managed encryption, blocks public access, enforces SSL, and expires objects after 1 day.
+- Adds organization-scoped `s3:ListBucket` and `s3:GetObject` bucket policies using SSM parameter `/organization/id`.
 
-- WebmonitorSqlite
-	- Creates Lambdas list and make.
-	- list scans current-day CSV files and invokes make asynchronously.
-	- make builds a domains SQLite database per CSV and uploads dated sqlite3 objects.
-	- list also copies dns.sqlite3 from caretakerstaged into YYYY-MM-DD-osint.sqlite3 in temporarywebmonitor.
-	- Scheduled daily at 01:15 UTC.
+### `WebmonitorDownload`
 
-- WebmonitorSearch
-	- Creates Lambdas search and searchlist.
-	- searchlist pulls search terms from lunker, tracks per-day execution in state, and invokes search for each daily sqlite3 object.
-	- search loads optional permutation terms, queries SQLite, and reconciles insert/delete deltas in DynamoDB.
-	- Target DynamoDB table is inferred from the SQLite object key suffix.
-	- Scheduled daily at 11:15 UTC.
+- Creates Lambda `download` using Python 3.13 on ARM64.
+- Uses a prebuilt Lambda layer from `s3://packages-use2-lukach-io/requests.zip`.
+- Creates Secrets Manager secret `webmonitor` with a placeholder `token` value.
+- Downloads these feed types into `temporarywebmonitor`:
+  - `dailyupdate`, `weeklyupdate`, `monthlyupdate`, `quarterlyupdate`
+  - `dailyremove`, `weeklyremove`, `monthlyremove`, `quarterlyremove`
+  - `detailed-update`, `malware`
+- Runs daily at `01:00 UTC`.
 
-- WebmonitorDynamoDB
-	- Creates DynamoDB tables:
-		- dailyremove, dailyupdate, weeklyremove, weeklyupdate
-		- monthlyremove, monthlyupdate, quarterlyremove, quarterlyupdate
-		- malware, osint, state
-	- Table settings: on-demand billing, ttl attribute, PITR enabled, stream enabled, deletion protection enabled.
-	- Replicates each table to us-east-1 and us-west-2.
-	- Creates Lambda action and subscribes DynamoDB streams for dailyremove, dailyupdate, malware, and osint.
-	- action resolves recipients from lunker and sends SES raw emails.
+### `WebmonitorSqlite`
 
-- WebmonitorGithub
-	- Creates GitHub OIDC provider and IAM role for repo:jblukach/webmonitor:*.
-	- Grants deployment and asset publishing permissions used by CI/CD.
+- Creates Lambdas `list` and `make` from the `sqlite/` package.
+- `list` scans current-day CSV objects and invokes `make` asynchronously for each file.
+- `make` converts CSV rows into SQLite databases and uploads `YYYY-MM-DD-*.sqlite3` objects.
+- `list` also copies `dns.sqlite3` from bucket `caretakerstaged` into `temporarywebmonitor` as `YYYY-MM-DD-osint.sqlite3`.
+- Runs daily at `01:15 UTC`.
+
+### `WebmonitorSearch`
+
+- Creates Lambda `search` and Lambda `searchlist`.
+- `searchlist` reads monitored values from the shared `lunker` table, records daily execution state in `state`, and invokes `search` for each current-day SQLite object.
+- `search` optionally loads permutations from the shared `permutation` table, searches the SQLite database, and reconciles insert and delete deltas into the target DynamoDB table inferred from the S3 object key suffix.
+- For missing dated SQLite objects, `search` falls back to the previous day by copying the prior key in S3 when available.
+- Runs daily at `11:15 UTC`.
+
+### `WebmonitorDynamoDB`
+
+- Creates DynamoDB tables:
+  - `dailyremove`, `dailyupdate`, `weeklyremove`, `weeklyupdate`
+  - `monthlyremove`, `monthlyupdate`, `quarterlyremove`, `quarterlyupdate`
+  - `malware`, `osint`, `state`
+- Tables use on-demand billing, `ttl` for expiration, point-in-time recovery, DynamoDB streams, and deletion protection.
+- Replicates each table to `us-east-1` and `us-west-2`.
+- Creates Lambda `action` and subscribes DynamoDB streams for `dailyremove`, `dailyupdate`, `malware`, and `osint`.
+- `action` looks up recipients in `lunker` by `pk/tk` GSI and sends SES raw email notifications.
+
+### `WebmonitorGithub`
+
+- Creates a GitHub OIDC provider for `https://token.actions.githubusercontent.com`.
+- Creates an IAM role trust for `repo:jblukach/webmonitor:*`.
+- Grants the permissions needed for GitHub Actions CDK deployment and asset publishing.
 
 ## Repository Layout
 
@@ -64,43 +74,73 @@ app.py                      CDK app entrypoint
 webmonitor/                 CDK stack definitions
 download/download.py        feed downloader Lambda
 sqlite/list.py              SQLite orchestration Lambda
-sqlite/make.py              CSV to SQLite builder Lambda
+sqlite/make.py              CSV-to-SQLite builder Lambda
 search/list.py              search orchestration Lambda
 search/search.py            SQLite matcher and DynamoDB reconciler
 action/action.py            DynamoDB stream to SES notifier
 ```
 
-## Prerequisites
+## Requirements
 
-- Python 3.13 recommended for local synth/deploy workflows.
-- AWS CLI configured for the target account.
-- AWS CDK v2 installed.
-- CDK bootstrap completed with qualifier lukach in us-east-1, us-east-2, and us-west-2.
-- Existing S3 bucket packages-use2-lukach-io containing requests.zip for the Lambda layer.
-- Existing SSM parameters:
-	- /account/lunker: account id that owns shared lunker and permutation tables.
-	- /organization/id: AWS organization id for resource policies.
-- Existing DynamoDB table lunker in the account specified by /account/lunker:
-	- partition key: pk
-	- sort key: sk
-	- a GSI with pk as hash key and tk as range key.
-- Existing DynamoDB table permutation in the account specified by /account/lunker:
-	- partition key: pk
-	- sort key: sk
-	- optional perm attribute containing related search terms.
-- Verified SES identity for hello@lukach.io and/or lukach.io in the deploy region.
+This repository depends on both code in this repo and shared infrastructure that already exists.
+
+### Local tooling
+
+- Python `3.13`
+- AWS CLI configured for the target account
+- AWS CDK v2 CLI installed separately, for example `npm install -g aws-cdk`
+- GitHub Actions runner capacity that matches `codebuild-webmonitor-*` labels (for repository CI/CD)
+
+### Bootstrapped CDK environments
+
+Bootstrap with qualifier `lukach` in:
+
+- `us-east-2` for the primary stacks
+- `us-east-1` and `us-west-2` for replicated DynamoDB resources and CDK assets
+
+### Shared resources and parameters
+
+- S3 bucket `packages-use2-lukach-io` containing `requests.zip`
+- S3 bucket `caretakerstaged` containing `dns.sqlite3`
+- SSM parameter `/account/lunker` with the AWS account ID that owns the shared `lunker` and `permutation` tables
+- SSM parameter `/organization/id` with the AWS Organization ID used in bucket and table resource policies
+
+### Shared DynamoDB tables
+
+The account referenced by `/account/lunker` must already contain:
+
+- `lunker`
+  - partition key `pk`
+  - sort key `sk`
+  - a GSI with `pk` as the hash key and `tk` as the range key
+- `permutation`
+  - partition key `pk`
+  - sort key `sk`
+  - optional `perm` attribute containing related search terms
+
+### SES prerequisites
+
+- Verified SES identity for `hello@lukach.io` and/or domain identity `lukach.io` in `us-east-2`
+- The `action` Lambda sender defaults are set by stack configuration, so changing sender identity requires a stack/code change
 
 ## Local Setup
 
-Create and activate a virtual environment, then install dependencies:
+Create and activate a virtual environment, then install Python dependencies:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Bootstrap (new account or first-time regions):
+Install the CDK CLI if it is not already available:
+
+```bash
+npm install -g aws-cdk
+```
+
+Bootstrap the required regions:
 
 ```bash
 cdk bootstrap --qualifier lukach aws://<ACCOUNT_ID>/us-east-1
@@ -110,7 +150,7 @@ cdk bootstrap --qualifier lukach aws://<ACCOUNT_ID>/us-west-2
 
 ## Deploy
 
-Deploy all stacks:
+The application always synthesizes stacks for `us-east-2`, using `CDK_DEFAULT_ACCOUNT` for the account. Deploy all stacks with:
 
 ```bash
 cdk deploy --all --profile <aws-profile>
@@ -119,15 +159,15 @@ cdk deploy --all --profile <aws-profile>
 Useful commands:
 
 ```bash
-cdk synth
-cdk diff
 cdk ls
+cdk synth
+cdk diff --profile <aws-profile>
 cdk destroy --all --profile <aws-profile>
 ```
 
 ## Post-Deploy Configuration
 
-Update Secrets Manager secret webmonitor with your real domains-monitor token:
+Update Secrets Manager secret `webmonitor` with your real Domains Monitor token:
 
 ```json
 {
@@ -137,23 +177,23 @@ Update Secrets Manager secret webmonitor with your real domains-monitor token:
 
 Without this value, the download Lambda cannot fetch upstream feed data.
 
-## Manual Invocation Examples
+## Manual Operations
 
-Invoke downloader:
+Invoke the download Lambda:
 
 ```bash
 DOWNLOAD_FN=$(aws lambda list-functions \
-	--query "Functions[?starts_with(FunctionName, 'WebmonitorDownload') && ends_with(FunctionName, 'download')].FunctionName | [0]" \
-	--output text)
+  --query "Functions[?starts_with(FunctionName, 'WebmonitorDownload') && ends_with(FunctionName, 'download')].FunctionName | [0]" \
+  --output text)
 
 aws lambda invoke \
-	--function-name "$DOWNLOAD_FN" \
-	--payload '{}' \
-	--cli-binary-format raw-in-base64-out \
-	/tmp/download.json
+  --function-name "$DOWNLOAD_FN" \
+  --payload '{}' \
+  --cli-binary-format raw-in-base64-out \
+  /tmp/download.json
 ```
 
-Run searchlist in scheduled mode (all tracked items):
+Run `searchlist` in scheduled mode for all tracked items:
 
 ```bash
 aws lambda invoke \
@@ -163,7 +203,7 @@ aws lambda invoke \
   /tmp/searchlist.json
 ```
 
-Run searchlist for a single status value:
+Run `searchlist` for a single status or search term:
 
 ```bash
 aws lambda invoke \
@@ -175,23 +215,52 @@ aws lambda invoke \
 
 ## Data Flow
 
-1. download writes dated CSV files such as YYYY-MM-DD-dailyupdate.csv.
-2. sqlite/list triggers sqlite/make to create YYYY-MM-DD-*.sqlite3 files.
-3. sqlite/list also copies dns.sqlite3 into YYYY-MM-DD-osint.sqlite3.
-4. search/list selects terms, tracks state, then invokes search per sqlite3 file.
-5. search reconciles SQLite matches against DynamoDB by inserting new and deleting stale records.
-6. DynamoDB stream inserts on selected tables invoke action, which sends SES alerts to lunker recipients.
+1. `download` writes dated CSV files such as `YYYY-MM-DD-dailyupdate.csv`.
+2. `sqlite/list` invokes `sqlite/make` to build `YYYY-MM-DD-*.sqlite3` objects.
+3. `sqlite/list` copies `dns.sqlite3` into `YYYY-MM-DD-osint.sqlite3`.
+4. `searchlist` selects search terms, records state, and invokes `search` once per SQLite object.
+5. `search` compares SQLite results with DynamoDB and inserts or deletes rows as needed.
+6. DynamoDB stream inserts on selected tables invoke `action`, which looks up recipients and sends SES email.
 
 ## CI/CD
 
-GitHub Actions workflow .github/workflows/webmonitor.yaml deploys on push to main and runs on a monthly schedule.
+GitHub Actions workflow `.github/workflows/webmonitor.yaml`:
+
+- deploys on every push to `main`
+- runs on a monthly schedule at `02:00 UTC` on the first day of the month
+- assumes the IAM role stored in GitHub secret `ROLE`
+- installs CDK globally, installs Python dependencies, and runs `cdk deploy --all --require-approval never`
 
 ## Operational Notes
 
-- Search includes a previous-day S3 fallback: if a requested dated sqlite3 key is missing, it attempts to copy the prior day key.
-- Some IAM policies are broad (resource *). Restrict these to least privilege if required for your environment.
-- temporarywebmonitor is intentionally short-lived with a 1-day retention policy.
+- The primary deployment region is hard-coded to `us-east-2` in `app.py`.
+- S3 bucket name `temporarywebmonitor` is fixed in code and must be globally unique across AWS.
+- `temporarywebmonitor` is intentionally short-lived and configured for 1-day retention.
+- The search worker uses SQLite FTS when available and falls back to `LIKE` queries for short search terms.
+- Some IAM policies remain broad (`resources = ['*']`). Tighten them if you need stricter least-privilege controls.
+
+## Quick Runbook
+
+1. Validate CDK bootstrap.
+Run:
+```bash
+cdk bootstrap --qualifier lukach aws://<ACCOUNT_ID>/us-east-1
+cdk bootstrap --qualifier lukach aws://<ACCOUNT_ID>/us-east-2
+cdk bootstrap --qualifier lukach aws://<ACCOUNT_ID>/us-west-2
+```
+
+2. Validate download dependencies.
+Check that secret `webmonitor` has a non-empty `token`, and confirm `s3://packages-use2-lukach-io/requests.zip` exists.
+
+3. Validate search dependencies.
+Confirm `/account/lunker` points to the correct account and table `lunker` has a GSI with hash key `pk` and range key `tk`.
+
+4. Validate alerting prerequisites.
+Confirm `hello@lukach.io` and/or domain identity `lukach.io` is verified in SES for `us-east-2`.
+
+5. Validate daily data availability.
+Confirm `caretakerstaged/dns.sqlite3` exists and daily objects matching `YYYY-MM-DD-*.csv` are present in `temporarywebmonitor`.
 
 ## License
 
-This project is licensed under Apache License 2.0. See LICENSE.
+This project is licensed under Apache License 2.0. See `LICENSE`.

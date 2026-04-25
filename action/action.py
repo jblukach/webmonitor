@@ -1,7 +1,13 @@
 import boto3
 import json
 import os
+from functools import lru_cache
 from boto3.dynamodb.conditions import Key
+
+
+_DYNAMODB_RESOURCE = boto3.resource('dynamodb')
+_DYNAMODB_CLIENT = boto3.client('dynamodb')
+_SES_CLIENT = boto3.client('ses')
 
 
 def _table_name_from_arn(table_arn):
@@ -17,22 +23,36 @@ def _table_name_from_arn(table_arn):
 
 def _query_lunker_emails(table, index_name, lookup_value):
     tk_prefix = 'LUNKER#' + lookup_value + '#'
+    emails = set()
 
     response = table.query(
         IndexName=index_name,
-        KeyConditionExpression=Key('pk').eq('LUNKER#') & Key('tk').begins_with(tk_prefix)
+        KeyConditionExpression=Key('pk').eq('LUNKER#') & Key('tk').begins_with(tk_prefix),
+        ProjectionExpression='email'
     )
-    items = response.get('Items', [])
+    for item in response.get('Items', []):
+        email = item.get('email')
+        if email:
+            emails.add(email)
 
     while 'LastEvaluatedKey' in response:
         response = table.query(
             IndexName=index_name,
             KeyConditionExpression=Key('pk').eq('LUNKER#') & Key('tk').begins_with(tk_prefix),
-            ExclusiveStartKey=response['LastEvaluatedKey']
+            ExclusiveStartKey=response['LastEvaluatedKey'],
+            ProjectionExpression='email'
         )
-        items.extend(response.get('Items', []))
+        for item in response.get('Items', []):
+            email = item.get('email')
+            if email:
+                emails.add(email)
 
-    return sorted({item.get('email') for item in items if item.get('email')})
+    return sorted(emails)
+
+
+@lru_cache(maxsize=8)
+def _get_tk_index_name(table_name, configured_index_name):
+    return _resolve_tk_index_name(_DYNAMODB_CLIENT, table_name, configured_index_name)
 
 
 def _resolve_tk_index_name(dynamodb_client, table_name, configured_index_name):
@@ -92,11 +112,8 @@ def handler(event, _context):
     table_name = _table_name_from_arn(os.environ['LUNKER_TABLE'])
     configured_index_name = os.environ.get('LUNKER_TK_INDEX')
 
-    dynamodb = boto3.resource('dynamodb')
-    dynamodb_client = boto3.client('dynamodb')
-    lunker_table = dynamodb.Table(table_name)
-    ses = boto3.client('ses')
-    tk_index_name = _resolve_tk_index_name(dynamodb_client, table_name, configured_index_name)
+    lunker_table = _DYNAMODB_RESOURCE.Table(table_name)
+    tk_index_name = _get_tk_index_name(table_name, configured_index_name)
 
     from_email = os.environ.get('SES_FROM', 'hello@lukach.io')
 
@@ -133,7 +150,7 @@ def handler(event, _context):
                     body = defanged_domain if defanged_domain else 'N/A'
                     raw_message = _build_raw_email(from_email, subject, body)
 
-                    ses.send_raw_email(
+                    _SES_CLIENT.send_raw_email(
                         Source=from_email,
                         Destinations=emails,
                         RawMessage={'Data': raw_message}

@@ -7,6 +7,67 @@ from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 
 
+_DYNAMODB_RESOURCE = boto3.resource('dynamodb')
+_DYNAMODB_CLIENTS = {}
+
+
+def _get_dynamodb_client(region_name):
+    if region_name not in _DYNAMODB_CLIENTS:
+        _DYNAMODB_CLIENTS[region_name] = boto3.client('dynamodb', region_name=region_name)
+    return _DYNAMODB_CLIENTS[region_name]
+
+
+def _build_fts_or_query(terms):
+    quoted_terms = []
+    for term in terms:
+        normalized = (term or '').strip()
+        if len(normalized) < 3:
+            continue
+        quoted_terms.append('"' + normalized.replace('"', '""') + '"')
+    return ' OR '.join(quoted_terms)
+
+
+def _sqlite_search_domains(db, search_terms):
+    cursor = db.cursor()
+    unique_terms = list(dict.fromkeys(t for t in search_terms if t))
+
+    cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='domains_fts'")
+    has_fts = cursor.fetchone() is not None
+
+    short_terms = [term for term in unique_terms if len(term.strip()) < 3]
+
+    if has_fts:
+        fts_query = _build_fts_or_query(unique_terms)
+        has_fts_terms = bool(fts_query)
+
+        if has_fts_terms and short_terms:
+            placeholders = ' OR '.join(['domain LIKE ?' for _ in short_terms])
+            like_params = ['%' + term + '%' for term in short_terms]
+            cursor.execute(
+                f"SELECT domain FROM domains WHERE domain IN (SELECT domain FROM domains_fts WHERE domains_fts MATCH ?) UNION SELECT domain FROM domains WHERE {placeholders}",
+                [fts_query] + like_params
+            )
+            return cursor.fetchall()
+
+        if has_fts_terms:
+            cursor.execute(
+                'SELECT domain FROM domains_fts WHERE domains_fts MATCH ?',
+                (fts_query,)
+            )
+            return cursor.fetchall()
+
+    wildcards = ['%' + term + '%' for term in unique_terms if term.strip()]
+    if not wildcards:
+        return []
+
+    placeholders = ' OR '.join(['domain LIKE ?' for _ in wildcards])
+    cursor.execute(
+        f'SELECT domain FROM domains WHERE {placeholders}',
+        wildcards
+    )
+    return cursor.fetchall()
+
+
 def _get_previous_day_key(key):
     if len(key) < 11 or key[4] != '-' or key[7] != '-':
         return None
@@ -46,7 +107,57 @@ def _ensure_s3_object_exists(s3_client, bucket, key):
     )
     print(f'Copied previous day object in S3: {previous_day_key} -> {key}')
 
-def handler(event, context):
+
+def _get_permutations(perm_table_env, normalized_item, region_candidates):
+    perm_table_identifiers = []
+    if perm_table_env:
+        perm_table_identifiers.append(perm_table_env)
+        if perm_table_env.startswith('arn:'):
+            perm_table_identifiers.append(perm_table_env.split('/')[-1])
+
+    if 'permutation' not in perm_table_identifiers:
+        perm_table_identifiers.append('permutation')
+
+    for perm_region in region_candidates:
+        perm_client = _get_dynamodb_client(perm_region)
+
+        for table_identifier in perm_table_identifiers:
+            try:
+                perm_response = perm_client.get_item(
+                    TableName=table_identifier,
+                    Key={
+                        'pk': {'S': 'LUNKER#'},
+                        'sk': {'S': 'LUNKER#' + normalized_item}
+                    },
+                    ProjectionExpression='perm'
+                )
+            except ClientError as e:
+                if e.response.get('Error', {}).get('Code') in ('ResourceNotFoundException', 'ResourceNotFound'):
+                    continue
+                raise
+
+            perm_item = perm_response.get('Item', {})
+            perm_attr = perm_item.get('perm', {})
+            if 'L' in perm_attr:
+                perms = [v.get('S') for v in perm_attr['L'] if 'S' in v]
+            elif 'SS' in perm_attr:
+                perms = list(perm_attr['SS'])
+            else:
+                perms = []
+
+            if perms:
+                print(
+                    'Permutation table hit: '
+                    + table_identifier
+                    + ' region=' + perm_region
+                    + ' sk=LUNKER#' + normalized_item
+                )
+                return perms
+
+    return []
+
+def handler(event, _context):
+    _ = _context
 
     key = event.get('Key')
     item = event.get('Item')
@@ -66,14 +177,6 @@ def handler(event, context):
         perm_table_env = os.environ.get('DYNAMODB_TABLE', 'permutation').strip()
         normalized_item = (item or '').strip().lower()
 
-        perm_table_candidates = []
-        if perm_table_env.startswith('arn:'):
-            perm_table_candidates.append(perm_table_env.split('/')[-1])
-        elif perm_table_env:
-            perm_table_candidates.append(perm_table_env)
-        if 'permutation' not in perm_table_candidates:
-            perm_table_candidates.append('permutation')
-
         region_candidates = []
         if perm_table_env.startswith('arn:'):
             arn_parts = perm_table_env.split(':')
@@ -83,93 +186,35 @@ def handler(event, context):
             if region_name and region_name not in region_candidates:
                 region_candidates.append(region_name)
 
-        perms = []
-        for perm_region in region_candidates:
-            if perm_table_env.startswith('arn:'):
-                perm_client = boto3.client('dynamodb', region_name=perm_region)
-                try:
-                    perm_response = perm_client.get_item(
-                        TableName=perm_table_env,
-                        Key={
-                            'pk': {'S': 'LUNKER#'},
-                            'sk': {'S': 'LUNKER#' + normalized_item}
-                        }
-                    )
-                    perm_item = perm_response.get('Item', {})
-                    if 'perm' in perm_item:
-                        if 'L' in perm_item['perm']:
-                            perms = [v.get('S') for v in perm_item['perm']['L'] if 'S' in v]
-                        elif 'SS' in perm_item['perm']:
-                            perms = list(perm_item['perm']['SS'])
-                except ClientError as e:
-                    if e.response.get('Error', {}).get('Code') not in ('ResourceNotFoundException', 'ResourceNotFound'):
-                        raise
-
-                if perms:
-                    print(
-                        'Permutation table hit: '
-                        + perm_table_env
-                        + ' region=' + perm_region
-                        + ' sk=LUNKER#' + normalized_item
-                    )
-                    break
-
-            perm_dynamodb = boto3.resource('dynamodb', region_name=perm_region)
-            for perm_table_name in perm_table_candidates:
-                perm_table = perm_dynamodb.Table(perm_table_name)
-
-                try:
-                    perm_response = perm_table.get_item(
-                        Key={
-                            'pk': 'LUNKER#',
-                            'sk': 'LUNKER#' + normalized_item
-                        }
-                    )
-                except ClientError as e:
-                    if e.response.get('Error', {}).get('Code') in ('ResourceNotFoundException', 'ResourceNotFound'):
-                        continue
-                    raise
-
-                perm_item = perm_response.get('Item', {})
-                candidate_perms = perm_item.get('perm', [])
-                if candidate_perms:
-                    perms = list(candidate_perms)
-                    print(
-                        'Permutation table hit: '
-                        + perm_table_name
-                        + ' region=' + perm_region
-                        + ' sk=LUNKER#' + normalized_item
-                    )
-                    break
-
-            if perms:
-                break
+        perms = _get_permutations(perm_table_env, normalized_item, region_candidates)
 
         print('Permutations: ' + str(len(perms)))
 
         search_terms = [item] + list(perms)
-        wildcards = ['%' + term + '%' for term in search_terms]
 
         db = sqlite3.connect(db_path)
+        db.execute('PRAGMA query_only = ON')
+        db.execute('PRAGMA temp_store = MEMORY')
+        db.execute('PRAGMA cache_size = -8000')
         cursor = db.cursor()
 
         if 'osint' in key:
 
-            placeholders = ' OR '.join(['artifact LIKE ?' for _ in wildcards])
-            cursor.execute(
-                f'SELECT artifact FROM dns WHERE {placeholders} ORDER BY artifact',
-                wildcards
-            )
+            wildcards = ['%' + term + '%' for term in search_terms if (term or '').strip()]
+            if not wildcards:
+                rows = []
+            else:
+                placeholders = ' OR '.join(['artifact LIKE ?' for _ in wildcards])
+                cursor.execute(
+                    f'SELECT artifact FROM dns WHERE {placeholders}',
+                    wildcards
+                )
+                rows = cursor.fetchall()
 
         else:
 
-            placeholders = ' OR '.join(['domain LIKE ?' for _ in wildcards])
-            cursor.execute(
-                f'SELECT domain FROM domains WHERE {placeholders} ORDER BY domain',
-                wildcards
-            )
+            rows = _sqlite_search_domains(db, search_terms)
 
-        rows = cursor.fetchall()
         db.close()
 
         print('Matches: ' + str(len(rows)))
@@ -177,21 +222,24 @@ def handler(event, context):
         # Extract table name from key: between last '-' and '.'
         table_name = key.rsplit('-', 1)[-1].rsplit('.', 1)[0]
         
-        dynamodb = boto3.resource('dynamodb')
-        table = dynamodb.Table(table_name)
+        table = _DYNAMODB_RESOURCE.Table(table_name)
 
         sk_query = 'LUNKER#' + item + '#'
         
         response = table.query(
-            KeyConditionExpression = Key('pk').eq('LUNKER#') & Key('sk').begins_with(sk_query)
+            KeyConditionExpression = Key('pk').eq('LUNKER#') & Key('sk').begins_with(sk_query),
+            ProjectionExpression = '#d',
+            ExpressionAttributeNames = {'#d': 'domain'}
         )
-        responsedata = response['Items']
+        responsedata = response.get('Items', [])
         while 'LastEvaluatedKey' in response:
             response = table.query(
                 KeyConditionExpression = Key('pk').eq('LUNKER#') & Key('sk').begins_with(sk_query),
-                ExclusiveStartKey = response['LastEvaluatedKey']
+                ExclusiveStartKey = response['LastEvaluatedKey'],
+                ProjectionExpression = '#d',
+                ExpressionAttributeNames = {'#d': 'domain'}
             )
-            responsedata.extend(response['Items'])
+            responsedata.extend(response.get('Items', []))
 
         print('DynamoDB: '+str(len(responsedata)))
 
@@ -205,36 +253,38 @@ def handler(event, context):
         to_insert = sqlite_domains - dynamodb_domains
         ttl = int((datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30)).timestamp())
 
-        for domain in to_insert:
-            parts = domain.split('.')
-            tld = parts[-1] if len(parts) > 1 else domain
-            sld = parts[-2] if len(parts) > 1 else domain
-            sk = f'LUNKER#{item}#{domain}'
-            table.put_item(
-                Item={
-                    'pk': 'LUNKER#',
-                    'sk': sk,
-                    'domain': domain,
-                    'sld': sld,
-                    'tld': tld,
-                    'ttl': ttl,
-                    'tbl': table_name,
-                    'search': item
-                }
-            )
-            print(f'Inserted: {domain}')
+        with table.batch_writer() as batch:
+            for domain in to_insert:
+                parts = domain.split('.')
+                tld = parts[-1] if len(parts) > 1 else domain
+                sld = parts[-2] if len(parts) > 1 else domain
+                sk = f'LUNKER#{item}#{domain}'
+                batch.put_item(
+                    Item={
+                        'pk': 'LUNKER#',
+                        'sk': sk,
+                        'domain': domain,
+                        'sld': sld,
+                        'tld': tld,
+                        'ttl': ttl,
+                        'tbl': table_name,
+                        'search': item
+                    }
+                )
+                print(f'Inserted: {domain}')
 
         # Items in DynamoDB but not in SQLite - DELETE
         to_delete = dynamodb_domains - sqlite_domains
-        for domain in to_delete:
-            sk = f'LUNKER#{item}#{domain}'
-            table.delete_item(
-                Key={
-                    'pk': 'LUNKER#',
-                    'sk': sk
-                }
-            )
-            print(f'Deleted: {domain}')
+        with table.batch_writer() as batch:
+            for domain in to_delete:
+                sk = f'LUNKER#{item}#{domain}'
+                batch.delete_item(
+                    Key={
+                        'pk': 'LUNKER#',
+                        'sk': sk
+                    }
+                )
+                print(f'Deleted: {domain}')
 
         print(f'Inserted: {len(to_insert)}, Deleted: {len(to_delete)}')
 
