@@ -61,23 +61,112 @@ def handler(event, context):
     s3_client.download_file(bucket, key, db_path)
 
     try:
-        wildcard = '%' + item + '%'
+        # Query permutation table for additional search terms.
+        # Lunker writes keys as: pk=LUNKER#, sk=LUNKER#<lowercase_sld>, and table is in us-east-2.
+        perm_table_env = os.environ.get('DYNAMODB_TABLE', 'permutation').strip()
+        normalized_item = (item or '').strip().lower()
+
+        perm_table_candidates = []
+        if perm_table_env.startswith('arn:'):
+            perm_table_candidates.append(perm_table_env.split('/')[-1])
+        elif perm_table_env:
+            perm_table_candidates.append(perm_table_env)
+        if 'permutation' not in perm_table_candidates:
+            perm_table_candidates.append('permutation')
+
+        region_candidates = []
+        if perm_table_env.startswith('arn:'):
+            arn_parts = perm_table_env.split(':')
+            if len(arn_parts) > 3 and arn_parts[3]:
+                region_candidates.append(arn_parts[3])
+        for region_name in [os.environ.get('AWS_REGION', '').strip(), 'us-east-2']:
+            if region_name and region_name not in region_candidates:
+                region_candidates.append(region_name)
+
+        perms = []
+        for perm_region in region_candidates:
+            if perm_table_env.startswith('arn:'):
+                perm_client = boto3.client('dynamodb', region_name=perm_region)
+                try:
+                    perm_response = perm_client.get_item(
+                        TableName=perm_table_env,
+                        Key={
+                            'pk': {'S': 'LUNKER#'},
+                            'sk': {'S': 'LUNKER#' + normalized_item}
+                        }
+                    )
+                    perm_item = perm_response.get('Item', {})
+                    if 'perm' in perm_item:
+                        if 'L' in perm_item['perm']:
+                            perms = [v.get('S') for v in perm_item['perm']['L'] if 'S' in v]
+                        elif 'SS' in perm_item['perm']:
+                            perms = list(perm_item['perm']['SS'])
+                except ClientError as e:
+                    if e.response.get('Error', {}).get('Code') not in ('ResourceNotFoundException', 'ResourceNotFound'):
+                        raise
+
+                if perms:
+                    print(
+                        'Permutation table hit: '
+                        + perm_table_env
+                        + ' region=' + perm_region
+                        + ' sk=LUNKER#' + normalized_item
+                    )
+                    break
+
+            perm_dynamodb = boto3.resource('dynamodb', region_name=perm_region)
+            for perm_table_name in perm_table_candidates:
+                perm_table = perm_dynamodb.Table(perm_table_name)
+
+                try:
+                    perm_response = perm_table.get_item(
+                        Key={
+                            'pk': 'LUNKER#',
+                            'sk': 'LUNKER#' + normalized_item
+                        }
+                    )
+                except ClientError as e:
+                    if e.response.get('Error', {}).get('Code') in ('ResourceNotFoundException', 'ResourceNotFound'):
+                        continue
+                    raise
+
+                perm_item = perm_response.get('Item', {})
+                candidate_perms = perm_item.get('perm', [])
+                if candidate_perms:
+                    perms = list(candidate_perms)
+                    print(
+                        'Permutation table hit: '
+                        + perm_table_name
+                        + ' region=' + perm_region
+                        + ' sk=LUNKER#' + normalized_item
+                    )
+                    break
+
+            if perms:
+                break
+
+        print('Permutations: ' + str(len(perms)))
+
+        search_terms = [item] + list(perms)
+        wildcards = ['%' + term + '%' for term in search_terms]
 
         db = sqlite3.connect(db_path)
         cursor = db.cursor()
 
         if 'osint' in key:
 
+            placeholders = ' OR '.join(['artifact LIKE ?' for _ in wildcards])
             cursor.execute(
-                'SELECT artifact FROM dns WHERE artifact LIKE ? ORDER BY artifact',
-                (wildcard,)
+                f'SELECT artifact FROM dns WHERE {placeholders} ORDER BY artifact',
+                wildcards
             )
 
         else:
 
+            placeholders = ' OR '.join(['domain LIKE ?' for _ in wildcards])
             cursor.execute(
-                'SELECT domain FROM domains WHERE domain LIKE ? ORDER BY domain',
-                (wildcard,)
+                f'SELECT domain FROM domains WHERE {placeholders} ORDER BY domain',
+                wildcards
             )
 
         rows = cursor.fetchall()
