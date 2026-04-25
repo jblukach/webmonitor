@@ -9,7 +9,6 @@ from webmonitor.webmonitor_github import WebmonitorGithub
 from webmonitor.webmonitor_search import WebmonitorSearch
 from webmonitor.webmonitor_sqlite import WebmonitorSqlite
 from webmonitor.webmonitor_storage import WebmonitorStorage
-from webmonitor.webmonitor_ziplist import WebmonitorZiplist
 
 app = cdk.App()
 
@@ -70,17 +69,6 @@ WebmonitorSqlite(
 
 WebmonitorStorage(
     app, 'WebmonitorStorage',
-    env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region = 'us-east-2'
-    ),
-    synthesizer = cdk.DefaultStackSynthesizer(
-        qualifier = 'lukach'
-    )
-)
-
-WebmonitorZiplist(
-    app, 'WebmonitorZiplist',
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
         region = 'us-east-2'

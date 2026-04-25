@@ -6,7 +6,7 @@ The project is designed around scheduled Lambda workflows and organization-scope
 
 ## What It Does
 
-1. Downloads domain-monitor feed files (CSV + full ZIP) into S3.
+1. Downloads domain-monitor CSV feed files into S3.
 2. Converts daily CSV files into SQLite snapshots.
 3. Loads targeted domains from a source table and executes searches.
 4. Reconciles matches into dedicated DynamoDB tables (`insert` / `delete` delta model).
@@ -24,7 +24,7 @@ The CDK app defines these stacks:
 - `WebmonitorDownload`
 	- Creates `download` Lambda (Python 3.13, ARM64, 15 min timeout, 4 GiB ephemeral storage).
 	- Stores API token in Secrets Manager secret `webmonitor`.
-	- Downloads domain-monitor list types and full ZIP to S3 bucket `temporarywebmonitor`.
+	- Downloads domain-monitor list types to S3 bucket `temporarywebmonitor`.
 	- Runs daily at `01:00` (cron in `us-east-2`).
 
 - `WebmonitorSqlite`
@@ -34,15 +34,10 @@ The CDK app defines these stacks:
 	- Also copies `dns.sqlite3` from `caretakerstaged` into dated `*-osint.sqlite3` in `temporarywebmonitor`.
 	- Runs daily at `01:15`.
 
-- `WebmonitorZiplist`
-	- Creates `ziplist` Lambda.
-	- Scans the dated full ZIP for item matches and reconciles into DynamoDB table `full`.
-	- If the requested dated object is missing, it attempts fallback to previous day by copying in S3.
-
 - `WebmonitorSearch`
 	- Creates `search` + `searchlist` Lambdas.
 	- `searchlist` reads terms from a source DynamoDB table (`lunker`) and tracks daily status in `state`.
-	- Invokes `ziplist` for full ZIP search and `search` for each SQLite file.
+	- Invokes `search` for each current-day SQLite file.
 	- `search` queries SQLite (`domains` or `dns` table depending on dataset) and reconciles results into the target DynamoDB table derived from key name.
 	- Runs daily at `11:15`.
 
@@ -70,7 +65,6 @@ sqlite/list.py            # SQLite orchestrator Lambda
 sqlite/make.py            # CSV -> SQLite builder Lambda
 search/list.py            # Search orchestrator Lambda
 search/search.py          # SQLite matcher + DynamoDB reconciler
-ziplist/ziplist.py        # ZIP matcher + DynamoDB reconciler
 action/action.py          # DynamoDB stream -> SES notifications
 ```
 
@@ -170,10 +164,8 @@ aws lambda invoke \
 
 1. `download` writes dated files like:
 	 - `YYYY-MM-DD-dailyupdate.csv`
-	 - `YYYY-MM-DD-full.zip`
 2. `sqlite/list` triggers `sqlite/make` to create `YYYY-MM-DD-*.sqlite3` files.
 3. `search/list` selects search terms and invokes:
-	 - `ziplist` against `YYYY-MM-DD-full.zip` -> table `full`
 	 - `search` against each SQLite DB -> table inferred from key suffix
 4. Reconciliation logic inserts new matches and deletes stale matches in DynamoDB.
 5. DynamoDB stream inserts on selected tables trigger `action`, which sends SES alerts.
@@ -183,7 +175,7 @@ aws lambda invoke \
 - Lambdas are configured for Python 3.13 and ARM64.
 - Several IAM policies in this project currently use broad resource scopes (`*`); tighten them if required by your security posture.
 - Storage is intentionally short-lived in `temporarywebmonitor` (1-day expiration).
-- Reconciliation code includes previous-day fallback for missing dated S3 objects in `search` and `ziplist` workflows.
+- Reconciliation code includes previous-day fallback for missing dated S3 objects in `search` workflows.
 
 ## License
 

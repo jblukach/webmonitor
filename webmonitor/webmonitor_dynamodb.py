@@ -478,54 +478,6 @@ class WebmonitorDynamoDB(Stack):
             )
         )
 
-        full = _dynamodb.TableV2(
-            self, 'full',
-            table_name = 'full',
-            partition_key = {
-                'name': 'pk',
-                'type': _dynamodb.AttributeType.STRING
-            },
-            sort_key = {
-                'name': 'sk',
-                'type': _dynamodb.AttributeType.STRING
-            },
-            billing = _dynamodb.Billing.on_demand(),
-            removal_policy = RemovalPolicy.DESTROY,
-            time_to_live_attribute = 'ttl',
-            point_in_time_recovery_specification = _dynamodb.PointInTimeRecoverySpecification(
-                point_in_time_recovery_enabled = True
-            ),
-            deletion_protection = True,
-            dynamo_stream = _dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            replicas = self._replicas_for_table(organization.string_value, 'full')
-        )
-
-        full.add_to_resource_policy(
-            _iam.PolicyStatement(
-                sid = 'AllowOrganizationGetItemAndQuery',
-                effect = _iam.Effect.ALLOW,
-                principals = [
-                    _iam.OrganizationPrincipal(organization_id = organization.string_value)
-                ],
-                actions = [
-                    'dynamodb:GetItem',
-                    'dynamodb:Query'
-                ],
-                resources = [
-                    self.format_arn(
-                        service = 'dynamodb',
-                        resource = 'table',
-                        resource_name = 'full'
-                    ),
-                    self.format_arn(
-                        service = 'dynamodb',
-                        resource = 'table',
-                        resource_name = 'full/index/*'
-                    )
-                ]
-            )
-        )
-
         malware = _dynamodb.TableV2(
             self, 'malware',
             table_name = 'malware',
